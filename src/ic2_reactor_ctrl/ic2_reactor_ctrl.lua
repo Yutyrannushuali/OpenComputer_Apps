@@ -203,12 +203,12 @@ local function item_gui()
     for i = 1, reactor_size do
         local damage, item_name = item_monitor(i)
         -- 显示名称
-        gpu.set(2+(col_cnt-1)*5, row_cnt*2-1, '['..item_name..']')
+        gpu.set(2+(col_cnt-1)*5, row_cnt*2-1, '⌈'..item_name..'⌉')
         -- 显示耐久
         if item_name == '   ' then
-            gpu.set(2+(col_cnt-1)*5, row_cnt*2, '['..'   '..']')
+            gpu.set(2+(col_cnt-1)*5, row_cnt*2, '⌊'..'   '..'⌋')
         else
-            gpu.set(2+(col_cnt-1)*5, row_cnt*2, '['..string.format('%.1f', 1-damage)..']')
+            gpu.set(2+(col_cnt-1)*5, row_cnt*2, '⌊'..string.format('%.1f', 1-damage)..'⌋')
         end
         col_cnt = col_cnt + 1
         if col_cnt > col_num then
@@ -245,7 +245,7 @@ end
 
 
 -- 设置分辨率为50x16
--- gpu.setResolution(50, 16)
+gpu.setResolution(50, 16)
 -- 清空屏幕
 term.clear()
 -- 在最后一行显示快捷键
