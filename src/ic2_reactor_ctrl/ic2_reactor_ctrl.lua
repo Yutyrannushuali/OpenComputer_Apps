@@ -1,0 +1,248 @@
+local component = require("component")
+local term = require("term")
+local thread = require("thread")
+local sides = require("sides")
+local gpu = component.gpu
+local reactor = component.reactor_chamber
+local transposer = component.transposer
+local redstone = component.redstone
+
+
+local isExit = 0
+-- 反应堆位于转运器的rc_side方向，资源容器位于src_side，垃圾存放容器位于bin_side
+local rc_side, src_side, bin_side = sides.west, sides.south, sides.north
+-- 反应堆总槽位数，资源箱总槽位数，垃圾箱总槽位数
+local reactor_size, src_size, bin_size = transposer.getInventorySize(rc_side) - 4, transposer.getInventorySize(src_side), transposer.getInventorySize(bin_side)
+-- 列数
+local col_num = reactor_size/6
+-- 预设指令表
+local commands_list = {'run','stop','exit'}
+-- 耐久耗尽才废弃的组件
+local item_list = {
+    'ic2:uranium_fuel_rod',
+    'ic2:dual_uranium_fuel_rod',
+    'ic2:quad_uranium_fuel_rod',
+    'ic2:mox_fuel_rod',
+    'ic2:dual_mox_fuel_rod',
+    'ic2:quad_mox_fuel_rod'
+}
+-- 输出红石信号的方向
+local rs_side = sides.west
+-- 反应堆温度百分比上限(0~1)
+local heat_rate_limit = 0.5
+
+
+-- 刷新光标所在行
+local function refresh_term(string)
+    term.clearLine()
+end
+
+-- 查询元素是否在表中
+local function IsInTable(value, table)
+    local found = false
+    for i, v in ipairs(table) do
+        if v == value then
+            found = true
+            break
+        end
+    end
+    return found
+end
+
+-- 查询指定方向容器中指定槽位
+local function SlotInfo(side, slot)
+    local slot_info = transposer.getStackInSlot(side, slot)
+    return slot_info
+end
+
+-- 更换组件
+local function change(item_info, item_slot)
+    -- 将反应堆的物品放入垃圾箱
+    for bin_slot = 1, bin_size do
+        if transposer.transferItem(src_side, rc_side, 1, bin_slot, item_slot) == 1 then
+            break
+        end
+    end
+    -- 将资源箱的物品放入反应堆
+    for src_slot = 1, src_size do
+        if SlotInfo(src_side, src_slot)['name'] == item_info then
+            transposer.transferItem(src_side, rc_side, 1, src_slot, item_slot)
+            break
+        end
+    end
+end
+
+-- 定义各物品名称，x为transposer.getStackInSlot(side:number, slot:number):table的返回值
+local function item(x)
+    local y = ''
+    if x['name'] == 'ic2:heat_vent' then
+       y = 'h v'
+    elseif x['name'] == 'ic2:reactor_heat_vent' then
+        y = 'rhv'
+    elseif x['name'] == 'ic2:overclocked_heat_vent' then
+        y = 'ohv'
+    elseif x['name'] == 'ic2:advanced_heat_vent' then
+        y = 'ahv'
+    elseif x['name'] == 'ic2:component_heat_vent' then
+        y = 'chv'
+    elseif x['name'] == 'ic2:heat_exchanger' then
+        y = 'h e'
+    elseif x['name'] == 'ic2:reactor_heat_exchanger' then
+        y = 'rhe'
+    elseif x['name'] == 'ic2:component_heat_exchanger' then
+        y = 'che'
+    elseif x['name'] == 'ic2:advanced_heat_exchanger' then
+        y = 'ahe'
+    elseif x['name'] == 'ic2:plating' then
+        y = ' p '
+    elseif x['name'] == 'ic2:heat_plating' then
+        y = 'h p'
+    elseif x['name'] == 'ic2:containment_plating' then
+        y = 'c p'
+    elseif x['name'] == 'ic2:neutron_reflector' then
+        y = 'n r'
+    elseif x['name'] == 'ic2:thick_neutron_reflector' then
+        y = 'tnr'
+    elseif x['name'] == 'ic2:iridium_reflector' then
+        y = 'i r'
+    elseif x['name'] == 'ic2:uranium_fuel_rod' then
+        y = 'u f'
+    elseif x['name'] == 'ic2:dual_uranium_fuel_rod' then
+        y = 'duf'
+    elseif x['name'] == 'ic2:quad_uranium_fuel_rod' then
+        y = 'quf'
+    elseif x['name'] == 'ic2:mox_fuel_rod' then
+        y = 'm f'
+    elseif x['name'] == 'ic2:dual_mox_fuel_rod' then
+        y = 'dmf'
+    elseif x['name'] == 'ic2:quad_mox_fuel_rod' then
+        y = 'qmf'
+    else
+        y = 'OUT'
+    end
+    return y
+end
+
+-- 反应堆温度监视器，参数side为输出红石信号的方向，heat为反应堆温度上限
+local function heat_monitor(side, heat_rate)
+    -- 温度监控
+    local now_heat = reactor.getHeat()
+    local max_heat = reactor.getMaxHeat()
+    local now_heat_rate = now_heat/max_heat
+    if now_heat_rate > heat_rate then
+        redstone.setOutput(side, 0)
+        
+    else
+        redstone.setOutput(side, 15)
+    end
+    -- 返回值为当前温度数值，当前温度百分比
+    return now_heat, now_heat_rate
+end
+
+-- 反应堆指定槽位组件监视器，slot为虚监视的槽位
+local function item_monitor(slot)
+    -- 初始化数据
+    local damage = 0
+    local item_name = '   '
+    -- 获取槽位信息
+    local slot_info = SlotInfo(rc_side, slot)
+    -- 判断槽位是否为空
+    if slot_info ~= nil then
+        -- 获取组件名称
+        item_name = item(slot_info)
+        -- 计算已损失耐久
+        if slot_info['damage'] >= slot_info['maxDamage'] then
+            damage = 1
+        else
+            damage = slot_info['damage']/slot_info['maxDamage']
+        end
+        -- 判断是否要更换
+        if IsInTable(slot_info, item_list) then
+            -- 在item_list中的组件，耐久值完全耗尽才更换
+            if damage >= 1 then
+                change(slot_info['name'], slot)
+            end
+        else
+            -- 不在item_list中的组件，耐久值消耗90%才更换
+            if damage >= 0.9 then
+                change(slot_info['name'], slot)
+            end
+        end
+    end
+    return damage, item_name
+end
+
+-- 反应堆能量监视器
+local function EU_monitor()
+    local EU = reactor.getReactorEUOutput()
+    return EU
+end
+
+-- 组件监视器GUI，显示在第1~6行
+local function item_gui()
+    --while true do
+        local col_cnt = 1
+        local row_cnt = 1
+        for i = 1, reactor_size do
+            local damage, item_name = item_monitor(i)
+            gpu.set(2+(col_cnt-1)*5, row_cnt, '['..item_name..']')
+            col_cnt = col_cnt + 1
+            if col_cnt > col_num then
+                col_cnt = 1
+                row_cnt = row_cnt + 1
+            end
+        end
+    --end
+end
+
+-- 温度监视器GUI，显示在7，8行
+local function heat_gui()
+    --while true do
+        local heat, heat_rate = heat_monitor(rs_side, heat_rate_limit)
+        gpu.set(2, 7, '温度: ' .. heat)
+        gpu.set(2, 8, '温度(%): ' .. heat_rate*100 .. '%')
+    --end
+end
+
+-- 其他数据GUI，显示在第7、8行
+local function other_gui()
+    --while true do
+        local EU = EU_monitor()
+        gpu.set(22, 7, string.format('输出: %f EU/t', EU))
+        if reactor.producesEnergy() then
+            gpu.set(22, 8, '状态: 运行')
+        else
+            gpu.set(22, 8, '状态: 停止')
+        end
+    --end
+end
+
+-- 命令行
+local function command()
+    local cmd = term.read(commands_list, false, commands_list)
+    if cmd == 'run' then
+        redstone.setOutput(rs_side, 15)
+        refresh_term()
+    elseif cmd == 'stop' then
+        redstone.setOutput(rs_side, 0)
+        refresh_term()
+    elseif cmd == 'exit' then
+        isExit = 1
+    end
+end
+
+
+-- 设置分辨率为50x16
+-- gpu.setResolution(50, 16)
+-- 清空屏幕
+term.clear()
+-- 将光标设置在最后一行
+term.setCursor(1, 16)
+
+
+while isExit == 0 do
+    local item_gui_thread = thread.create(item_gui)
+    local heat_gui_thread = thread.create(heat_gui)
+    local other_gui_thread = thread.create(other_gui)
+    local cmd_thread = thread.create(command)
+end
