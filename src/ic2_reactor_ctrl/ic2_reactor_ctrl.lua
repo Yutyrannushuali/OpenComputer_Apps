@@ -1,6 +1,6 @@
 local component = require("component")
 local term = require("term")
-local thread = require("thread")
+local event = require("event")
 local sides = require("sides")
 local gpu = component.gpu
 local reactor = component.reactor_chamber
@@ -15,8 +15,6 @@ local rc_side, src_side, bin_side = sides.west, sides.south, sides.north
 local reactor_size, src_size, bin_size = transposer.getInventorySize(rc_side) - 4, transposer.getInventorySize(src_side), transposer.getInventorySize(bin_side)
 -- 列数
 local col_num = reactor_size/6
--- 预设指令表
-local commands_list = {'run','stop','exit'}
 -- 耐久耗尽才废弃的组件
 local item_list = {
     'ic2:uranium_fuel_rod',
@@ -31,11 +29,6 @@ local rs_side = sides.west
 -- 反应堆温度百分比上限(0~1)
 local heat_rate_limit = 0.5
 
-
--- 刷新光标所在行
-local function refresh_term(string)
-    term.clearLine()
-end
 
 -- 查询元素是否在表中
 local function IsInTable(value, table)
@@ -59,7 +52,7 @@ end
 local function change(item_info, item_slot)
     -- 将反应堆的物品放入垃圾箱
     for bin_slot = 1, bin_size do
-        if transposer.transferItem(src_side, rc_side, 1, bin_slot, item_slot) == 1 then
+        if transposer.transferItem(rc_side, bin_side, 1, item_slot, bin_slot) == 1 then
             break
         end
     end
@@ -217,20 +210,6 @@ local function other_gui()
     --end
 end
 
--- 命令行
-local function command()
-    local cmd = term.read(commands_list, false, commands_list)
-    if cmd == 'run' then
-        redstone.setOutput(rs_side, 15)
-        refresh_term()
-    elseif cmd == 'stop' then
-        redstone.setOutput(rs_side, 0)
-        refresh_term()
-    elseif cmd == 'exit' then
-        isExit = 1
-    end
-end
-
 
 -- 设置分辨率为50x16
 -- gpu.setResolution(50, 16)
@@ -241,8 +220,20 @@ term.setCursor(1, 16)
 
 
 while isExit == 0 do
-    local item_gui_thread = thread.create(item_gui)
-    local heat_gui_thread = thread.create(heat_gui)
-    local other_gui_thread = thread.create(other_gui)
-    local cmd_thread = thread.create(command)
+    item_gui()
+    heat_gui()
+    other_gui()
+    local _, _, char, code = event.pull(0.2, "key_down")
+    if char then -- 如果捕获到了按键
+        -- char 是 ASCII 码: r=114, s=115, x=120
+        if char == 114 then -- 按 R
+            redstone.setOutput(rs_side, 15)
+            -- 可选：在屏幕打印提示 "Running..."
+        elseif char == 115 then -- 按 S
+            redstone.setOutput(rs_side, 0)
+            -- 可选：在屏幕打印提示 "Stopped"
+        elseif char == 120 then -- 按 X
+            isExit = 1
+        end
+    end
 end
