@@ -10,12 +10,24 @@ local redstone = component.redstone
 
 
 
+-- 位置关系配置
+local rs_side = 2  -- 红石信号输出方向，必须用数字表示
+local rc_side = sides.west  -- 反应堆所在方向
+local src_side = sides.south -- 资源箱所在方向
+local bin_side = sides.north -- 垃圾箱所在方向
+
+-- 反应堆温度百分比上限(0~1)
+local heat_rate_limit = 0.5
+-- 反应堆重启温度(0~1)，反应堆达到此温度后重启
+local restart_rate = 0.4
+
+-- 判断是否在冷却状态
+local isCooling = false
+
 -- 快捷键列表
 local cmd_list = '退出: [Ctrl+C] 开始: [Ctrl+R] 暂停: [Ctrl+S]'
 -- 控制程序是否运行
 local isRun = false
--- 反应堆位于转运器的rc_side方向，资源容器位于src_side，垃圾存放容器位于bin_side
-local rc_side, src_side, bin_side = sides.west, sides.south, sides.north
 -- 反应堆总槽位数，资源箱总槽位数，垃圾箱总槽位数
 local reactor_size, src_size, bin_size = transposer.getInventorySize(rc_side) - 4, transposer.getInventorySize(src_side), transposer.getInventorySize(bin_side)
 -- 列数
@@ -27,12 +39,16 @@ local item_list = {
     'ic2:quad_uranium_fuel_rod',
     'ic2:mox_fuel_rod',
     'ic2:dual_mox_fuel_rod',
-    'ic2:quad_mox_fuel_rod'
+    'ic2:quad_mox_fuel_rod',
 }
--- 输出红石信号的方向
-local rs_side = sides.west
--- 反应堆温度百分比上限(0~1)
-local heat_rate_limit = 0.5
+-- 不会损坏的组件
+local special_item_list = {
+    'ic2:component_heat_vent',
+    'ic2:plating',
+    'ic2:heat_plating',
+    'ic2:containment_plating',
+    'ic2:iridium_reflector'
+}
 
 
 
@@ -65,11 +81,20 @@ local function change(item_info, item_slot)
     end
     -- 将资源箱的物品放入反应堆
     for src_slot = 1, src_size do
-        if SlotInfo(src_side, src_slot)['name'] == item_info then
-            transposer.transferItem(src_side, rc_side, 1, src_slot, item_slot)
-            break
+        -- 槽位不为空
+        if SlotInfo(src_side, src_slot) then
+            if SlotInfo(src_side, src_slot)['name'] == item_info then
+                transposer.transferItem(src_side, rc_side, 1, src_slot, item_slot)
+                break
+            end
         end
     end
+    -- 关闭各个方向的红石信号输出
+    for i = 0, 5 do
+        redstone.setOutput(i, 0)
+    end
+    print('资源箱中缺少必要组件，请补充完毕后重启程序！')
+    os.exit(0)
 end
 
 -- 定义各物品名称，x为transposer.getStackInSlot(side:number, slot:number):table的返回值
@@ -125,8 +150,6 @@ end
 
 -- 反应堆温度监视器，参数side为输出红石信号的方向，heat为反应堆温度上限
 local function heat_monitor(side, heat_rate)
-    -- 判断是否在冷却状态
-    local isCooling = false
     -- 获取温度数据
     local now_heat = reactor.getHeat()
     local max_heat = reactor.getMaxHeat()
@@ -136,7 +159,7 @@ local function heat_monitor(side, heat_rate)
         -- 如果在冷却状态
         if isCooling then
             -- 温度百分比低于上限的10%则开启反应堆
-            if now_heat_rate < heat_rate_limit - 0.1 then
+            if now_heat_rate < restart_rate then
                 redstone.setOutput(side, 15)
                 isCooling = false
             end
@@ -164,23 +187,29 @@ local function item_monitor(slot)
     if slot_info ~= nil then
         -- 获取组件名称
         item_name = item(slot_info)
+            -- 计算已损失耐久
+            if IsInTable(slot_info['name'], special_item_list) then
+                -- 不会损坏的组件
+                damage = -1
+            else
+                -- 会损坏的组件
+                if slot_info['damage'] >= slot_info['maxDamage'] then
+                    damage = 1
+                else
+                    damage = slot_info['damage']/slot_info['maxDamage']
+                end
+            end
         -- 如果控制程序正在运行
         if isRun then
-            -- 计算已损失耐久
-            if slot_info['damage'] >= slot_info['maxDamage'] then
-                damage = 1
-            else
-                damage = slot_info['damage']/slot_info['maxDamage']
-            end
             -- 判断是否要更换
-            if IsInTable(slot_info, item_list) then
-                -- 在item_list中的组件，耐久值完全耗尽才更换
-                if damage >= 1 then
+            if IsInTable(slot_info['name'], item_list) then
+                -- 在item_list中的组件，耐久值耗尽才更换
+                if damage >= 1 and slot_info['damage'] ~= 0 then
                     change(slot_info['name'], slot)
                 end
             else
                 -- 不在item_list中的组件，耐久值消耗90%才更换
-                if damage >= 0.9 then
+                if damage >= 0.9 and slot_info['damage'] ~= 0 then
                     change(slot_info['name'], slot)
                 end
             end
@@ -205,7 +234,7 @@ local function item_gui()
         -- 显示名称
         gpu.set(2+(col_cnt-1)*5, row_cnt*2-1, '⌈'..item_name..'⌉')
         -- 显示耐久
-        if item_name == '   ' then
+        if item_name == '   ' or damage == -1 then
             gpu.set(2+(col_cnt-1)*5, row_cnt*2, '⌊'..'   '..'⌋')
         else
             gpu.set(2+(col_cnt-1)*5, row_cnt*2, '⌊'..string.format('%.1f', 1-damage)..'⌋')
@@ -221,14 +250,34 @@ end
 -- 温度监视器GUI，显示在7，8行
 local function heat_gui()
     local heat, heat_rate = heat_monitor(rs_side, heat_rate_limit)
-    gpu.set(2, 13, '温度: ' .. heat)
-    gpu.set(2, 14, '温度(%): ' .. heat_rate*100 .. '%')
+    -- 格式化温度数据
+    local heat_str = ''
+    if heat > 10^9 then
+        heat_str = string.format('%11s', string.format('%.0f', heat/(10^9)) .. 'B')
+    elseif heat > 10^6 then
+        heat_str = string.format('%11s', string.format('%.0f', heat/(10^6)) .. 'M')
+    elseif heat > 10^3 then
+        heat_str = string.format('%11s', string.format('%.0f', heat/(10^3)) .. 'K')
+    else
+        heat_str = string.format('%11s', string.format('%.0f', heat))
+    end
+    -- 格式化温度比例数据
+    local heat_rate_str = string.format('%8s', string.format('%.2f', heat_rate*100) .. '%')
+    -- 清理屏幕
+    gpu.fill(2, 13, 15, 1, ' ')
+    gpu.fill(2, 14, 15, 1, ' ')
+    -- 输出到屏幕
+    gpu.set(2, 13, '温度:' .. heat_str)
+    gpu.set(2, 14, '温度(%):' .. heat_rate_str)
 end
 
 -- 其他数据GUI，显示在第7、8行
 local function other_gui()
     local EU = EU_monitor()
-    gpu.set(22, 13, string.format('输出: %f EU/t', EU))
+    gpu.set(22, 13, string.format('输出: ' .. string.format('%.2f', EU) .. 'EU/t'))
+    if isCooling then
+        gpu.set(22, 14, string.format('Cooling!'))
+    end
     if reactor.producesEnergy() then
         gpu.set(22, 15, '反应堆: 运行')
     else
@@ -254,6 +303,12 @@ term.write(cmd_list)
 
 
 while true do
+    -- 确保控制程序未运行时不会输出红石信号
+    if not(isRun) then
+        for i = 0, 5 do
+            redstone.setOutput(i, 0)
+        end
+    end
     item_gui()
     heat_gui()
     other_gui()
@@ -262,13 +317,20 @@ while true do
     local isC, isR, isS = keyboard.isKeyDown(46), keyboard.isKeyDown(19), keyboard.isKeyDown(31)
     -- Ctrl+C为“退出”
     if isCtrl and isC then
-        os.exit(0)
+        break
     -- Ctrl+R为“运行控制程序”
     elseif isCtrl and isR then
+        redstone.setOutput(rs_side, 15)
         isRun = true
     -- Ctrl+S为“暂停控制程序”
     elseif isCtrl and isS then
+        redstone.setOutput(rs_side, 0)
         isRun = false
     end
     os.sleep(0)
+end
+
+-- 关闭各个方向的红石信号输出
+for i = 0, 5 do
+    redstone.setOutput(i, 0)
 end
