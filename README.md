@@ -1,5 +1,5 @@
 # 关于本仓库
-本仓库包含了我自己编写的可以在开放式电脑(Open Computers)模组中运行的lua程序。***如果你在运行程序时遇到问题，请尽量在GitCode上提交issue，GitHub上的issue我可能无法。***
+本仓库包含了我自己编写的可以在开放式电脑(Open Computers)模组中运行的lua程序。***如果你在运行程序时遇到问题，请尽量在GitCode上提交issue，GitHub上的issue我可能无法及时看到。***
 
 GitCode仓库地址: https://gitcode.com/Yutyrannus_huali/OpenComputer-Apps
 
