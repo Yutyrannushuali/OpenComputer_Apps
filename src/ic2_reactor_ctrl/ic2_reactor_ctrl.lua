@@ -21,9 +21,12 @@ local heat_rate_limit = 0.5
 -- 反应堆重启温度(0~1)，反应堆达到此温度后重启
 local restart_rate = 0.4
 
+
+
+
+
 -- 判断是否在冷却状态
 local isCooling = false
-
 -- 快捷键列表
 local cmd_list = '退出: [Ctrl+C] 开始: [Ctrl+R] 暂停: [Ctrl+S]'
 -- 控制程序是否运行
@@ -110,6 +113,10 @@ local function item(x)
         y = 'ahv'
     elseif x['name'] == 'ic2:component_heat_vent' then
         y = 'chv'
+    elseif x['name'] == 'ic2:rsh_condensator' then
+        y = 'r c'
+    elseif x['name'] == 'ic2:lzh_condensator' then
+        y = 'l c'
     elseif x['name'] == 'ic2:heat_exchanger' then
         y = 'h e'
     elseif x['name'] == 'ic2:reactor_heat_exchanger' then
@@ -263,7 +270,7 @@ local function heat_gui()
     end
     -- 格式化温度比例数据
     local heat_rate_str = string.format('%8s', string.format('%.2f', heat_rate*100) .. '%')
-    -- 清理屏幕
+    -- 清理区域
     gpu.fill(2, 13, 15, 1, ' ')
     gpu.fill(2, 14, 15, 1, ' ')
     -- 输出到屏幕
@@ -273,10 +280,29 @@ end
 
 -- 其他数据GUI，显示在第7、8行
 local function other_gui()
+    -- 格式化反应堆输出数据
     local EU = EU_monitor()
-    gpu.set(22, 13, string.format('输出: ' .. string.format('%.2f', EU) .. 'EU/t'))
+    local EU_str = ''
+    if EU > 10^9 then
+        EU_str = string.format('%11s', string.format('%.2f', EU/(10^9)) .. 'B EU/t')
+    elseif EU > 10^6 then
+        EU_str = string.format('%11s', string.format('%.2f', EU/(10^6)) .. 'M EU/t')
+    elseif EU > 10^3 then
+        EU_str = string.format('%11s', string.format('%.2f', EU/(10^3)) .. 'K EU/t')
+    else
+        EU_str = string.format('%11s', string.format('%.2f', EU) .. 'EU/t')
+    end
+    -- 清理区域
+    gpu.fill(22, 13, 15, 1, ' ')
+    -- 输出到屏幕
+    gpu.set(22, 13, '输出:' .. EU_str)
+    -- 判断是否在冷却状态
     if isCooling then
+        -- 输出冷却状态提示到屏幕
         gpu.set(22, 14, string.format('Cooling!'))
+    else
+        -- 清楚冷却状态提示
+        gpu.fill(22, 14, 15, 1, ' ')
     end
     if reactor.producesEnergy() then
         gpu.set(22, 15, '反应堆: 运行')
