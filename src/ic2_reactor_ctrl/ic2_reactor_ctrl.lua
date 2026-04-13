@@ -2,6 +2,7 @@ local component = require("component")
 local term = require("term")
 local sides = require("sides")
 local keyboard = require("keyboard")
+local thread = require("thread")
 local gpu = component.gpu
 local reactor = component.reactor_chamber
 local transposer = component.transposer
@@ -11,8 +12,8 @@ local redstone = component.redstone
 
 
 -- 位置关系配置
-local rs_side = 2  -- 红石信号输出方向，必须用数字表示
-local rc_side = sides.west  -- 反应堆所在方向
+local rs_side = 2            -- 红石信号输出方向，必须用数字表示
+local rc_side = sides.west   -- 反应堆所在方向
 local src_side = sides.south -- 资源箱所在方向
 local bin_side = sides.north -- 垃圾箱所在方向
 
@@ -28,23 +29,28 @@ local restart_rate = 0.4
 -- 判断是否在冷却状态
 local isCooling = false
 -- 快捷键列表
-local cmd_list = '退出: [Ctrl+C] 开始: [Ctrl+R] 暂停: [Ctrl+S]'
+local cmd_list = '退出 [Ctrl+C] 开始 [Ctrl+R] 暂停 [Ctrl+S]'
 -- 控制程序是否运行
 local isRun = false
 -- 反应堆总槽位数，资源箱总槽位数，垃圾箱总槽位数
-local reactor_size, src_size, bin_size = transposer.getInventorySize(rc_side) - 4, transposer.getInventorySize(src_side), transposer.getInventorySize(bin_side)
+local reactor_size, src_size, bin_size = transposer.getInventorySize(rc_side) - 4, transposer.getInventorySize(src_side),
+    transposer.getInventorySize(bin_side)
 -- 列数
-local col_num = reactor_size/6
--- 燃料及冷却单元位置信息
-local fuel_hs_slot = {}
+local col_num = reactor_size / 6
+-- 冷却单元位置信息
+local hs_slot = {}
 -- 燃料
-local fuel_list = {
-    'ic2:uranium_fuel_rod',
-    'ic2:dual_uranium_fuel_rod',
-    'ic2:quad_uranium_fuel_rod',
-    'ic2:mox_fuel_rod',
-    'ic2:dual_mox_fuel_rod',
-    'ic2:quad_mox_fuel_rod',
+local fuel_list = {}
+fuel_list[11] = 'ic2:uranium_fuel_rod'
+fuel_list[12] = 'ic2:dual_uranium_fuel_rod'
+fuel_list[13] = 'ic2:quad_uranium_fuel_rod'
+fuel_list[14] = 'ic2:mox_fuel_rod'
+fuel_list[15] = 'ic2:dual_mox_fuel_rod'
+fuel_list[16] = 'ic2:quad_mox_fuel_rod'
+
+-- 枯竭燃料
+local run_out_fuel_list = {
+    'ic2:nuclear'
 }
 -- 冷却单元
 local heat_storage_list = {
@@ -118,7 +124,7 @@ end
 local function item(x)
     local y = ''
     if x['name'] == 'ic2:heat_vent' then
-       y = 'h v'
+        y = 'h v'
     elseif x['name'] == 'ic2:reactor_heat_vent' then
         y = 'rhv'
     elseif x['name'] == 'ic2:overclocked_heat_vent' then
@@ -180,7 +186,7 @@ local function heat_monitor(side, heat_rate)
     -- 获取温度数据
     local now_heat = reactor.getHeat()
     local max_heat = reactor.getMaxHeat()
-    local now_heat_rate = now_heat/max_heat
+    local now_heat_rate = now_heat / max_heat
     -- 如果控制程序正在运行
     if isRun then
         -- 如果在冷却状态
@@ -190,7 +196,7 @@ local function heat_monitor(side, heat_rate)
                 redstone.setOutput(side, 15)
                 isCooling = false
             end
-        -- 如果不在冷却状态
+            -- 如果不在冷却状态
         else
             -- 温度百分比超过上限则关闭反应堆
             if now_heat_rate > heat_rate then
@@ -214,29 +220,29 @@ local function item_monitor(slot)
     if slot_info ~= nil then
         -- 获取组件名称
         item_name = item(slot_info)
-        -- 判断是否是燃料或冷却单元
-        if IsInTable(slot_info['name'], fuel_list) or IsInTable(slot_info['name'], heat_storage_list) then
-            fuel_hs_slot[slot] = slot_info['name']
+        -- 判断是否是冷却单元
+        if IsInTable(slot_info['name'], heat_storage_list) then
+            hs_slot[slot] = slot_info['name']
+        else
+            hs_slot[slot] = nil
         end
-            -- 计算已损失耐久
-            if IsInTable(slot_info['name'], special_item_list) then
-                -- 不会损坏的组件
-                damage = -1
+        -- 计算已损失耐久
+        if IsInTable(slot_info['name'], special_item_list) then
+            -- 不会损坏的组件
+            damage = -1
+        else
+            -- 会损坏的组件
+            if slot_info['damage'] >= slot_info['maxDamage'] then
+                damage = 1
             else
-                -- 会损坏的组件
-                if slot_info['damage'] >= slot_info['maxDamage'] then
-                    damage = 1
-                else
-                    damage = slot_info['damage']/slot_info['maxDamage']
-                end
+                damage = slot_info['damage'] / slot_info['maxDamage']
             end
+        end
         -- 如果控制程序正在运行
         if isRun then
-            -- 判断是否是燃料或冷却单元
-            if fuel_hs_slot[slot] ~= nil then
-                if damage >= 1 then
-                    change(fuel_hs_slot[slot], slot)
-                end
+            -- 判断是否是燃料
+            if IsInTable(slot_info['name'], run_out_fuel_list) then
+                change(fuel_list[slot_info['damage']], slot)
             else
                 -- 判断是否要更换
                 if IsInTable(slot_info['name'], condensator_list) then
@@ -254,8 +260,8 @@ local function item_monitor(slot)
         end
     else
         -- 判断是否是燃料或冷却单元
-        if fuel_hs_slot[slot] ~= nil then
-            change(fuel_hs_slot[slot], slot)
+        if hs_slot[slot] ~= nil then
+            change(hs_slot[slot], slot)
         end
     end
     return damage, item_name
@@ -270,85 +276,97 @@ end
 
 -- 组件监视器GUI，显示在第1~6行
 local function item_gui()
-    local col_cnt = 1
-    local row_cnt = 1
-    for i = 1, reactor_size do
-        local damage, item_name = item_monitor(i)
-        -- 显示名称
-        gpu.set(2+(col_cnt-1)*5, row_cnt*2-1, '⌈'..item_name..'⌉')
-        -- 显示耐久
-        if item_name == '   ' or damage == -1 then
-            gpu.set(2+(col_cnt-1)*5, row_cnt*2, '⌊'..'   '..'⌋')
-        else
-            gpu.set(2+(col_cnt-1)*5, row_cnt*2, '⌊'..string.format('%.1f', 1-damage)..'⌋')
+    while true do
+        local col_cnt = 1
+        local row_cnt = 1
+        for i = 1, reactor_size do
+            local damage, item_name = item_monitor(i)
+            -- 显示名称
+            gpu.set(2 + (col_cnt - 1) * 5, row_cnt * 2 - 1, '⌈' .. item_name .. '⌉')
+            -- 显示耐久
+            if item_name == '   ' or damage == -1 then
+                gpu.set(2 + (col_cnt - 1) * 5, row_cnt * 2, '⌊' .. '   ' .. '⌋')
+            else
+                gpu.set(2 + (col_cnt - 1) * 5, row_cnt * 2, '⌊' .. string.format('%.1f', 1 - damage) .. '⌋')
+            end
+            col_cnt = col_cnt + 1
+            if col_cnt > col_num then
+                col_cnt = 1
+                row_cnt = row_cnt + 1
+            end
         end
-        col_cnt = col_cnt + 1
-        if col_cnt > col_num then
-            col_cnt = 1
-            row_cnt = row_cnt + 1
-        end
+        -- 冻结线程
+        thread.current():suspend()
     end
 end
 
 -- 温度监视器GUI，显示在7，8行
 local function heat_gui()
-    local heat, heat_rate = heat_monitor(rs_side, heat_rate_limit)
-    -- 格式化温度数据
-    local heat_str = ''
-    if heat > 10^9 then
-        heat_str = string.format('%11s', string.format('%.0f', heat/(10^9)) .. 'B')
-    elseif heat > 10^6 then
-        heat_str = string.format('%11s', string.format('%.0f', heat/(10^6)) .. 'M')
-    elseif heat > 10^3 then
-        heat_str = string.format('%11s', string.format('%.0f', heat/(10^3)) .. 'K')
-    else
-        heat_str = string.format('%11s', string.format('%.0f', heat))
+    while true do
+        local heat, heat_rate = heat_monitor(rs_side, heat_rate_limit)
+        -- 格式化温度数据
+        local heat_str = ''
+        if heat > 10 ^ 9 then
+            heat_str = string.format('%11s', string.format('%.0f', heat / (10 ^ 9)) .. 'B')
+        elseif heat > 10 ^ 6 then
+            heat_str = string.format('%11s', string.format('%.0f', heat / (10 ^ 6)) .. 'M')
+        elseif heat > 10 ^ 3 then
+            heat_str = string.format('%11s', string.format('%.0f', heat / (10 ^ 3)) .. 'K')
+        else
+            heat_str = string.format('%11s', string.format('%.0f', heat))
+        end
+        -- 格式化温度比例数据
+        local heat_rate_str = string.format('%8s', string.format('%.2f', heat_rate * 100) .. '%')
+        -- 清理区域
+        gpu.fill(2, 13, 15, 1, ' ')
+        gpu.fill(2, 14, 15, 1, ' ')
+        -- 输出到屏幕
+        gpu.set(2, 13, '温度:' .. heat_str)
+        gpu.set(2, 14, '温度(%):' .. heat_rate_str)
+        -- 冻结线程
+        thread.current():suspend()
     end
-    -- 格式化温度比例数据
-    local heat_rate_str = string.format('%8s', string.format('%.2f', heat_rate*100) .. '%')
-    -- 清理区域
-    gpu.fill(2, 13, 15, 1, ' ')
-    gpu.fill(2, 14, 15, 1, ' ')
-    -- 输出到屏幕
-    gpu.set(2, 13, '温度:' .. heat_str)
-    gpu.set(2, 14, '温度(%):' .. heat_rate_str)
 end
 
 -- 其他数据GUI，显示在第7、8行
 local function other_gui()
-    -- 格式化反应堆输出数据
-    local EU = EU_monitor()
-    local EU_str = ''
-    if EU > 10^9 then
-        EU_str = string.format('%11s', string.format('%.2f', EU/(10^9)) .. 'B EU/t')
-    elseif EU > 10^6 then
-        EU_str = string.format('%11s', string.format('%.2f', EU/(10^6)) .. 'M EU/t')
-    elseif EU > 10^3 then
-        EU_str = string.format('%11s', string.format('%.2f', EU/(10^3)) .. 'K EU/t')
-    else
-        EU_str = string.format('%11s', string.format('%.2f', EU) .. 'EU/t')
-    end
-    -- 清理区域
-    gpu.fill(22, 13, 15, 1, ' ')
-    -- 输出到屏幕
-    gpu.set(22, 13, '输出:' .. EU_str)
-    -- 判断是否在冷却状态
-    if isCooling then
-        -- 输出冷却状态提示到屏幕
-        gpu.set(22, 14, string.format('Cooling!'))
-    else
-        -- 清楚冷却状态提示
-        gpu.fill(22, 14, 15, 1, ' ')
-    end
-    if reactor.producesEnergy() then
-        gpu.set(22, 15, '反应堆: 运行')
-    else
-        gpu.set(22, 15, '反应堆: 停止')
-    end
-    if isRun then
-        gpu.set(2, 15, '控制程序: 运行')
-    else
-        gpu.set(2, 15, '控制程序: 停止')
+    while true do
+        -- 格式化反应堆输出数据
+        local EU = EU_monitor()
+        local EU_str = ''
+        if EU > 10 ^ 9 then
+            EU_str = string.format('%11s', string.format('%.2f', EU / (10 ^ 9)) .. 'B EU/t')
+        elseif EU > 10 ^ 6 then
+            EU_str = string.format('%11s', string.format('%.2f', EU / (10 ^ 6)) .. 'M EU/t')
+        elseif EU > 10 ^ 3 then
+            EU_str = string.format('%11s', string.format('%.2f', EU / (10 ^ 3)) .. 'K EU/t')
+        else
+            EU_str = string.format('%11s', string.format('%.2f', EU) .. 'EU/t')
+        end
+        -- 清理区域
+        gpu.fill(22, 13, 15, 1, ' ')
+        -- 输出到屏幕
+        gpu.set(22, 13, '输出:' .. EU_str)
+        -- 判断是否在冷却状态
+        if isCooling then
+            -- 输出冷却状态提示到屏幕
+            gpu.set(22, 14, string.format('Cooling!'))
+        else
+            -- 清楚冷却状态提示
+            gpu.fill(22, 14, 15, 1, ' ')
+        end
+        if reactor.producesEnergy() then
+            gpu.set(22, 15, '反应堆: 运行')
+        else
+            gpu.set(22, 15, '反应堆: 停止')
+        end
+        if isRun then
+            gpu.set(2, 15, '控制程序: 运行')
+        else
+            gpu.set(2, 15, '控制程序: 停止')
+        end
+        -- 冻结线程
+        thread.current():suspend()
     end
 end
 
@@ -363,28 +381,32 @@ term.clear()
 term.setCursor(1, 16)
 term.write(cmd_list)
 
+local t_item_gui = thread.create(item_gui)
+local t_heat_gui = thread.create(heat_gui)
+local t_other_gui = thread.create(other_gui)
 
 while true do
     -- 确保控制程序未运行时不会输出红石信号
-    if not(isRun) then
+    if not (isRun) then
         for i = 0, 5 do
             redstone.setOutput(i, 0)
         end
     end
-    item_gui()
-    heat_gui()
-    other_gui()
+    t_item_gui:resume()
+    t_heat_gui:resume()
+    t_other_gui:resume()
+    os.sleep(0.1)
     -- 判断按了哪些键
     local isCtrl = keyboard.isControlDown()
     local isC, isR, isS = keyboard.isKeyDown(46), keyboard.isKeyDown(19), keyboard.isKeyDown(31)
     -- Ctrl+C为“退出”
     if isCtrl and isC then
         break
-    -- Ctrl+R为“运行控制程序”
+        -- Ctrl+R为“运行控制程序”
     elseif isCtrl and isR then
         redstone.setOutput(rs_side, 15)
         isRun = true
-    -- Ctrl+S为“暂停控制程序”
+        -- Ctrl+S为“暂停控制程序”
     elseif isCtrl and isS then
         redstone.setOutput(rs_side, 0)
         isRun = false
@@ -392,6 +414,9 @@ while true do
     os.sleep(0)
 end
 
+t_item_gui:kill()
+t_heat_gui:kill()
+t_other_gui:kill()
 -- 关闭各个方向的红石信号输出
 for i = 0, 5 do
     redstone.setOutput(i, 0)
