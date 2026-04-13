@@ -1,4 +1,4 @@
-# ic2_reactor_ctrl.lua
+# ic2_reactor_ctrl
 ## 目录
 - [UI介绍](##UI介绍)
 - [功能介绍](##功能介绍)
