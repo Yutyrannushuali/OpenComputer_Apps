@@ -35,14 +35,27 @@ local isRun = false
 local reactor_size, src_size, bin_size = transposer.getInventorySize(rc_side) - 4, transposer.getInventorySize(src_side), transposer.getInventorySize(bin_side)
 -- 列数
 local col_num = reactor_size/6
--- 耐久耗尽才废弃的组件
-local item_list = {
+-- 燃料及冷却单元位置信息
+local fuel_hs_slot = {}
+-- 燃料
+local fuel_list = {
     'ic2:uranium_fuel_rod',
     'ic2:dual_uranium_fuel_rod',
     'ic2:quad_uranium_fuel_rod',
     'ic2:mox_fuel_rod',
     'ic2:dual_mox_fuel_rod',
     'ic2:quad_mox_fuel_rod',
+}
+-- 冷却单元
+local heat_storage_list = {
+    'ic2:heat_storage',
+    'ic2:tri_heat_storage',
+    'ic2:hex_heat_storage'
+}
+-- 冷凝模块
+local condensator_list = {
+    'ic2:rsh_condensator',
+    'ic2:lzh_condensator'
 }
 -- 不会损坏的组件
 local special_item_list = {
@@ -56,7 +69,7 @@ local special_item_list = {
 
 
 
--- 查询元素是否在表中
+-- 查询元素是否在表中，value是要查询的元素，table是表
 local function IsInTable(value, table)
     local found = false
     for i, v in ipairs(table) do
@@ -68,13 +81,13 @@ local function IsInTable(value, table)
     return found
 end
 
--- 查询指定方向容器中指定槽位
+-- 查询指定方向容器中指定槽位，side是容器所在方向，slot是槽位，返回tabel
 local function SlotInfo(side, slot)
     local slot_info = transposer.getStackInSlot(side, slot)
     return slot_info
 end
 
--- 更换组件
+-- 更换组件，item_info是物品的name（不是label），item_slot是该物品所在槽位
 local function change(item_info, item_slot)
     -- 将反应堆的物品放入垃圾箱
     for bin_slot = 1, bin_size do
@@ -88,7 +101,7 @@ local function change(item_info, item_slot)
         if SlotInfo(src_side, src_slot) then
             if SlotInfo(src_side, src_slot)['name'] == item_info then
                 transposer.transferItem(src_side, rc_side, 1, src_slot, item_slot)
-                break
+                goto finish
             end
         end
     end
@@ -98,6 +111,7 @@ local function change(item_info, item_slot)
     end
     print('资源箱中缺少必要组件，请补充完毕后重启程序！')
     os.exit(0)
+    :: finish ::
 end
 
 -- 定义各物品名称，x为transposer.getStackInSlot(side:number, slot:number):table的返回值
@@ -149,6 +163,12 @@ local function item(x)
         y = 'dmf'
     elseif x['name'] == 'ic2:quad_mox_fuel_rod' then
         y = 'qmf'
+    elseif x['name'] == 'ic2:heat_storage' then
+        y = 'h s'
+    elseif x['name'] == 'ic2:tri_heat_storage' then
+        y = 'ths'
+    elseif x['name'] == 'ic2:hex_heat_storage' then
+        y = 'hhs'
     else
         y = 'OUT'
     end
@@ -183,7 +203,7 @@ local function heat_monitor(side, heat_rate)
     return now_heat, now_heat_rate
 end
 
--- 反应堆指定槽位组件监视器，slot为虚监视的槽位
+-- 反应堆指定槽位组件监视器，slot为须监视的槽位
 local function item_monitor(slot)
     -- 初始化数据
     local damage = 0
@@ -194,6 +214,10 @@ local function item_monitor(slot)
     if slot_info ~= nil then
         -- 获取组件名称
         item_name = item(slot_info)
+        -- 判断是否是燃料或冷却单元
+        if IsInTable(slot_info['name'], fuel_list) or IsInTable(slot_info['name'], heat_storage_list) then
+            fuel_hs_slot[slot] = slot_info['name']
+        end
             -- 计算已损失耐久
             if IsInTable(slot_info['name'], special_item_list) then
                 -- 不会损坏的组件
@@ -208,18 +232,30 @@ local function item_monitor(slot)
             end
         -- 如果控制程序正在运行
         if isRun then
-            -- 判断是否要更换
-            if IsInTable(slot_info['name'], item_list) then
-                -- 在item_list中的组件，耐久值耗尽才更换
-                if damage >= 1 and slot_info['damage'] ~= 0 then
-                    change(slot_info['name'], slot)
+            -- 判断是否是燃料或冷却单元
+            if fuel_hs_slot[slot] ~= nil then
+                if damage >= 1 then
+                    change(fuel_hs_slot[slot], slot)
                 end
             else
-                -- 不在item_list中的组件，耐久值消耗90%才更换
-                if damage >= 0.9 and slot_info['damage'] ~= 0 then
-                    change(slot_info['name'], slot)
+                -- 判断是否要更换
+                if IsInTable(slot_info['name'], condensator_list) then
+                    -- 冷凝模块耐久值耗尽才更换
+                    if damage >= 1 and slot_info['damage'] ~= 0 then
+                        change(slot_info['name'], slot)
+                    end
+                else
+                    -- 不在item_list中的组件，耐久值消耗90%才更换
+                    if damage >= 0.9 and slot_info['damage'] ~= 0 then
+                        change(slot_info['name'], slot)
+                    end
                 end
             end
+        end
+    else
+        -- 判断是否是燃料或冷却单元
+        if fuel_hs_slot[slot] ~= nil then
+            change(fuel_hs_slot[slot], slot)
         end
     end
     return damage, item_name
