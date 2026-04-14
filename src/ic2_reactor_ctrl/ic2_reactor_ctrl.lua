@@ -115,6 +115,9 @@ local function change(item_info, item_slot)
     for i = 0, 5 do
         redstone.setOutput(i, 0)
     end
+    T_item_gui:kill()
+    T_heat_gui:kill()
+    T_other_gui:kill()
     print('资源箱中缺少必要组件，请补充完毕后重启程序！')
     os.exit(0)
     :: finish ::
@@ -381,9 +384,9 @@ term.clear()
 term.setCursor(1, 16)
 term.write(cmd_list)
 
-local t_item_gui = thread.create(item_gui)
-local t_heat_gui = thread.create(heat_gui)
-local t_other_gui = thread.create(other_gui)
+T_item_gui = thread.create(item_gui)
+T_heat_gui = thread.create(heat_gui)
+T_other_gui = thread.create(other_gui)
 
 while true do
     -- 确保控制程序未运行时不会输出红石信号
@@ -392,9 +395,9 @@ while true do
             redstone.setOutput(i, 0)
         end
     end
-    t_item_gui:resume()
-    t_heat_gui:resume()
-    t_other_gui:resume()
+    T_item_gui:resume()
+    T_heat_gui:resume()
+    T_other_gui:resume()
     os.sleep(0.1)
     -- 判断按了哪些键
     local isCtrl = keyboard.isControlDown()
@@ -414,9 +417,9 @@ while true do
     os.sleep(0)
 end
 
-t_item_gui:kill()
-t_heat_gui:kill()
-t_other_gui:kill()
+T_item_gui:kill()
+T_heat_gui:kill()
+T_other_gui:kill()
 -- 关闭各个方向的红石信号输出
 for i = 0, 5 do
     redstone.setOutput(i, 0)
