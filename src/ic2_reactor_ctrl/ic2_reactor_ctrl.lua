@@ -39,7 +39,7 @@ local reactor_size, src_size, bin_size = transposer.getInventorySize(rc_side) - 
 local col_num = reactor_size / 6
 -- 冷却单元位置信息
 local hs_slot = {}
--- 燃料
+-- 不同枯竭燃料对应的燃料
 local fuel_list = {}
 fuel_list[11] = 'ic2:uranium_fuel_rod'
 fuel_list[12] = 'ic2:dual_uranium_fuel_rod'
@@ -58,10 +58,16 @@ local heat_storage_list = {
     'ic2:tri_heat_storage',
     'ic2:hex_heat_storage'
 }
--- 冷凝模块
-local condensator_list = {
+-- 冷凝模块和燃料
+local condensator_fuel_list = {
     'ic2:rsh_condensator',
-    'ic2:lzh_condensator'
+    'ic2:lzh_condensator',
+    'ic2:uranium_fuel_rod',
+    'ic2:dual_uranium_fuel_rod',
+    'ic2:quad_uranium_fuel_rod',
+    'ic2:mox_fuel_rod',
+    'ic2:dual_mox_fuel_rod',
+    'ic2:quad_mox_fuel_rod'
 }
 -- 不会损坏的组件
 local special_item_list = {
@@ -243,12 +249,12 @@ local function item_monitor(slot)
         end
         -- 如果控制程序正在运行
         if isRun then
-            -- 判断是否是燃料
+            -- 判断是否是枯竭的燃料
             if IsInTable(slot_info['name'], run_out_fuel_list) then
                 change(fuel_list[slot_info['damage']], slot)
             else
                 -- 判断是否要更换
-                if IsInTable(slot_info['name'], condensator_list) or IsInTable(slot_info['name'], heat_storage_list) then
+                if IsInTable(slot_info['name'], condensator_fuel_list) or IsInTable(slot_info['name'], heat_storage_list) then
                     -- 冷凝模块耐久值耗尽才更换
                     if damage >= 1 and slot_info['damage'] ~= 0 then
                         change(slot_info['name'], slot)
