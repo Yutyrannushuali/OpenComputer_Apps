@@ -245,7 +245,7 @@ local function item_monitor(slot)
                 change(fuel_list[slot_info['damage']], slot)
             else
                 -- 判断是否要更换
-                if IsInTable(slot_info['name'], condensator_list) then
+                if IsInTable(slot_info['name'], condensator_list) or IsInTable(slot_info['name'], heat_storage_list) then
                     -- 冷凝模块耐久值耗尽才更换
                     if damage >= 1 and slot_info['damage'] ~= 0 then
                         change(slot_info['name'], slot)
